@@ -1,14 +1,23 @@
 package net.sabamiso.android.accessibilityservicetest;
 
 import android.accessibilityservice.AccessibilityService;
+import android.content.Context;
 import android.content.res.Configuration;
+import android.graphics.Point;
+import android.graphics.Rect;
 import android.os.PowerManager;
+import android.support.v4.view.accessibility.AccessibilityNodeInfoCompat;
 import android.util.Log;
+import android.view.Display;
 import android.view.KeyEvent;
+import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.Toast;
 
 import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
 
 public class TestAccessibilityService extends AccessibilityService {
     public final String TAG = getClass().getSimpleName();
@@ -17,6 +26,8 @@ public class TestAccessibilityService extends AccessibilityService {
     static HashMap<Integer, String> map = new HashMap<Integer, String>();
 
     PowerManager.WakeLock wake_lock;
+
+    DebugOverlayView debugOverlayView;
 
     static {
         map.put(AccessibilityEvent.TYPE_ANNOUNCEMENT, "AccessibilityEvent.TYPE_ANNOUNCEMENT");
@@ -77,12 +88,21 @@ public class TestAccessibilityService extends AccessibilityService {
         PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
         wake_lock = pm.newWakeLock(
                 PowerManager.FULL_WAKE_LOCK | PowerManager.ON_AFTER_RELEASE, "TestAccessibilityService");
+        wake_lock.acquire();
+
+        debugOverlayView = DebugOverlayView.createView(this);
     }
 
     @Override
     public void onDestroy() {
         Log.d(TAG, "onDestroy()");
 
+        if (debugOverlayView != null) {
+            DebugOverlayView.destroyView(debugOverlayView);
+            debugOverlayView = null;
+        }
+
+        wake_lock.release();
         super.onDestroy();
     }
 
@@ -110,6 +130,15 @@ public class TestAccessibilityService extends AccessibilityService {
             }
         }
         debug("onAccessibilityEvent() : type=" + type_str);
+
+        switch(type) {
+            case AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED:
+            case AccessibilityEvent.TYPE_WINDOWS_CHANGED:
+            case AccessibilityEvent.TYPE_VIEW_SCROLLED:
+                updateWindowRects();
+                break;
+        }
+
     }
 
     @Override
@@ -125,12 +154,53 @@ public class TestAccessibilityService extends AccessibilityService {
         if (keyEvent.getKeyCode() == KeyEvent.KEYCODE_A ) {
             toast("KeyEvent.KEYCODE_A : handled!");
             performGlobalAction(GLOBAL_ACTION_NOTIFICATIONS);
-            wake_lock.acquire();
-            wake_lock.release();
             return true; // handled
         }
 
         return false; // not handled
     }
 
+    List<Rect> rects = new LinkedList<Rect>();
+    synchronized  void updateWindowRects() {
+        rects.clear();
+
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        AccessibilityNodeInfoCompat root_compat = new AccessibilityNodeInfoCompat(root);
+
+        Rect r = new Rect();
+        root_compat.getBoundsInScreen(r);
+        traverse(root_compat, 0);
+
+        debugOverlayView.setRects(rects);
+    }
+
+    void traverse(AccessibilityNodeInfoCompat node, int depth) {
+        dumpAccessibilityNodeInfo(node, depth);
+
+        Rect node_rect = new Rect();
+        node.getBoundsInScreen(node_rect);
+
+        rects.add(node_rect);
+
+        int count = node.getChildCount();
+        for (int i = 0; i < count; ++i) {
+            traverse(node.getChild(i), depth + 1);
+        }
+    }
+
+    void dumpAccessibilityNodeInfo(AccessibilityNodeInfoCompat node, int depth) {
+        String msg = "";
+        for (int i = 0; i < depth; ++i) {
+            msg += "  ";
+        }
+
+        Rect r_s = new Rect();
+        node.getBoundsInScreen(r_s);
+        Rect r_p = new Rect();
+        node.getBoundsInParent(r_p);
+
+        msg += "depth=" + depth + ", ";
+        msg += "node=[" + node.getWindowId() +", " + node.getClassName() + ", " + node.getText() + ", " + r_s + ", " + r_p + "]";
+        debug(msg);
+    }
 }
